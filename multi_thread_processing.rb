@@ -1,29 +1,43 @@
+require 'thread'
 class MultiThreadProcessing
-  def initialize(thread_number = 5)
-    @thread_number = thread_number
+  
+  class Error < StandardError
+  end
+
+  def initialize(max_thread_number = 5)
+    @max_thread_number = max_thread_number
   end
 
   def process(collection, &mapper)
     @collection = collection
     @mapper = mapper
-    process_collection
+    make_processing
   end
 
   private
 
-  def process_collection
-    map_items
+  def make_processing
+    init_private_settings
+    process_items
     process_queue
+    rescue StandardError => m
+      @thread_group.enclose
+      raise Error, m
   end
 
-  def map_items
-    init_private_settings
-    Thread.new do
-      @collection.each do |item|
-        @thread_group_mutex.synchronize do
-          add_thread(item)
-          @resource.wait(@thread_group_mutex)
-        end
+  def process_items
+    @thread_group.add(
+      Thread.new do
+        process_collection
+      end
+    )
+  end
+
+  def process_collection
+    @collection.each do |item|
+      @thread_group_mutex.synchronize do
+        add_thread(item)
+        @resource.wait(@thread_group_mutex)
       end
     end
   end
@@ -37,12 +51,11 @@ class MultiThreadProcessing
   end
 
   def add_thread(item)
-    @thread_group.add(
-      Thread.new do
-        new_thread_event_if_it_needed            
-        process_item(item)
-        new_thread_event
-      end)
+    Thread.new do
+      new_thread_event_if_it_needed            
+      process_item(item)
+      new_thread_event
+    end
   end
 
   def new_thread_event
@@ -53,7 +66,7 @@ class MultiThreadProcessing
 
   def new_thread_event_if_it_needed
     @thread_group_mutex.synchronize do
-      if @thread_group.list.length <= @thread_number
+      if @thread_group.list.length < @max_thread_number
         @resource.signal
       end
     end
